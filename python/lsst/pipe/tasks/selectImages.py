@@ -203,8 +203,25 @@ class WcsSelectImagesTask(BaseSelectImagesTask):
         for data in selectDataList:
             dataRef = data.dataRef
             imageWcs = data.wcs
-            imageBox = data.bbox
+            if imageWcs is None:
+                self.log.info("De-selecting exposure %s:  Exposure has no WCS.", dataRef.dataId)
+                continue
+            # Check if calexp has a WCS (cannot read in calexp directly and
+            # check with calexp.getWcs() as the WCS from obs_base utils.py
+            # createInitialSkyWcsFromBoresight() will get attached on read
+            # in gen2 via _standardizeExposure() in the cameraMapper.py in
+            # obs_base).
+            try:
+                md = dataRef.get("calexp_md", immediate=True)
+                if hasattr(md, "names"):  # To accommodate mocks in unittests
+                    if "CRPIX1" not in md.names():
+                        self.log.info("De-selecting exposure %s:  Exposure has no WCS.", dataRef.dataId)
+                        continue
+            except (KeyError, TypeError):
+                self.log.info("No calexp_md dataset found for exposure %s.  Relying on data.wcs for valid "
+                              "WCS check", dataRef.dataId)
 
+            imageBox = data.bbox
             imageCorners = self.getValidImageCorners(imageWcs, imageBox, patchPoly, dataId=None)
             if imageCorners:
                 dataRefList.append(dataRef)
@@ -238,24 +255,31 @@ class WcsSelectImagesTask(BaseSelectImagesTask):
         patchPoly = lsst.sphgeom.ConvexPolygon.convexHull(patchVertices)
         result = []
         for i, (imageWcs, imageBox, dataId) in enumerate(zip(wcsList, bboxList, dataIds)):
-            imageCorners = self.getValidImageCorners(imageWcs, imageBox, patchPoly, dataId)
-            if imageCorners:
-                result.append(i)
+            if imageWcs is None:
+                self.log.info("De-selecting exposure %s:  Exposure has no WCS.", dataId)
+            else:
+                imageCorners = self.getValidImageCorners(imageWcs, imageBox, patchPoly, dataId)
+                if imageCorners:
+                    result.append(i)
         return result
 
     def getValidImageCorners(self, imageWcs, imageBox, patchPoly, dataId=None):
         "Return corners or None if bad"
+        if imageWcs is None:
+            self.log.warning("Exposure %s has no WCS.", dataId)
+            return None
+
         try:
             imageCorners = [imageWcs.pixelToSky(pix) for pix in geom.Box2D(imageBox).getCorners()]
         except (pexExceptions.DomainError, pexExceptions.RuntimeError) as e:
             # Protecting ourselves from awful Wcs solutions in input images
             self.log.debug("WCS error in testing calexp %s (%s): deselecting", dataId, e)
-            return
+            return None
 
         imagePoly = lsst.sphgeom.ConvexPolygon.convexHull([coord.getVector() for coord in imageCorners])
         if imagePoly is None:
             self.log.debug("Unable to create polygon from image %s: deselecting", dataId)
-            return
+            return None
 
         if patchPoly.intersects(imagePoly):
             # "intersects" also covers "contains" or "is contained by"
@@ -345,6 +369,10 @@ class PsfWcsSelectImagesTask(WcsSelectImagesTask):
         for dataRef, exposureInfo in zip(result.dataRefList, result.exposureInfoList):
             butler = dataRef.butlerSubset.butler
             srcCatalog = butler.get('src', dataRef.dataId)
+            if np.all(np.isnan(srcCatalog["coord_ra"])) or np.all(np.isnan(srcCatalog["coord_dec"])):
+                self.log.info("De-selecting exposure %s:  Exposure has no WCS (as gleaned from the "
+                              "srcCatalog coord entries all being NaN.", dataRef.dataId)
+                continue
             valid = self.isValid(srcCatalog, dataRef.dataId)
             if valid is False:
                 continue
@@ -509,19 +537,34 @@ class BestSeeingWcsSelectImagesTask(WcsSelectImagesTask):
         result = super().runDataRef(dataRef, coordList, makeDataRefList=True, selectDataList=selectDataList)
 
         for dataRef, exposureInfo in zip(result.dataRefList, result.exposureInfoList):
-            cal = dataRef.get("calexp", immediate=True)
-
-            # if min/max PSF values are defined, remove images out of bounds
-            pixToArcseconds = cal.getWcs().getPixelScale().asArcseconds()
-            psfSize = cal.getPsf().computeShape().getDeterminantRadius()*pixToArcseconds
-            sizeFwhm = psfSize * np.sqrt(8.*np.log(2.))
-            if self.config.maxPsfFwhm and sizeFwhm > self.config.maxPsfFwhm:
-                continue
-            if self.config.minPsfFwhm and sizeFwhm < self.config.minPsfFwhm:
-                continue
-            psfSizes.append(sizeFwhm)
-            dataRefList.append(dataRef)
-            exposureInfoList.append(exposureInfo)
+            # Check if calexp has a WCS (cannot read in calexp directly and
+            # check with calexp.getWcs() as the WCS from obs_base utils.py
+            # createInitialSkyWcsFromBoresight() will get attached on read
+            # in gen2 via _standardizeExposure() in the cameraMapper.py in
+            # obs_base).
+            md = dataRef.get("calexp_md", immediate=True)
+            if hasattr(md, "names"):  # To accommodate mocks in unittests
+                if "CRPIX1" not in md.names():
+                    self.log.info("De-selecting exposure %s:  Exposure has no WCS.", dataRef.dataId)
+            else:
+                cal = dataRef.get("calexp", immediate=True)
+                calWcs = cal.getWcs()
+                if calWcs is None:
+                    self.log.info("De-selecting exposure %s:  Exposure has no WCS.", dataRef.dataId)
+                else:
+                    # If min/max PSF values are defined, remove images out of
+                    # bounds. The exposure must have a WCS to be considered for
+                    # inclusion.
+                    pixToArcseconds = calWcs.getPixelScale().asArcseconds()
+                    psfSize = cal.getPsf().computeShape().getDeterminantRadius()*pixToArcseconds
+                    sizeFwhm = psfSize * np.sqrt(8.*np.log(2.))
+                    if self.config.maxPsfFwhm and sizeFwhm > self.config.maxPsfFwhm:
+                        continue
+                    if self.config.minPsfFwhm and sizeFwhm < self.config.minPsfFwhm:
+                        continue
+                    psfSizes.append(sizeFwhm)
+                    dataRefList.append(dataRef)
+                    exposureInfoList.append(exposureInfo)
 
         if len(psfSizes) > self.config.nImagesMax:
             sortedIndices = np.argsort(psfSizes)[:self.config.nImagesMax]
@@ -663,9 +706,9 @@ class BestSeeingSelectVisitsTask(pipeBase.PipelineTask):
             mjd = visitSummary[0].getVisitInfo().getDate().get(system=DateTime.MJD)
 
             pixToArcseconds = [vs.getWcs().getPixelScale(vs.getBBox().getCenter()).asArcseconds()
-                               for vs in visitSummary]
+                               for vs in visitSummary if vs.getWcs()]
             # psfSigma is PSF model determinant radius at chip center in pixels
-            psfSigmas = np.array([vs['psfSigma'] for vs in visitSummary])
+            psfSigmas = np.array([vs['psfSigma'] for vs in visitSummary if vs.getWcs()])
             fwhm = np.nanmean(psfSigmas * pixToArcseconds) * np.sqrt(8.*np.log(2.))
 
             if self.config.maxPsfFwhm and fwhm > self.config.maxPsfFwhm:
@@ -731,12 +774,15 @@ class BestSeeingSelectVisitsTask(pipeBase.PipelineTask):
         """
         doesIntersect = False
         for detectorSummary in visitSummary:
-            corners = [lsst.geom.SpherePoint(ra, decl, units=lsst.geom.degrees).getVector() for (ra, decl) in
-                       zip(detectorSummary['raCorners'], detectorSummary['decCorners'])]
-            detectorPolygon = lsst.sphgeom.ConvexPolygon.convexHull(corners)
-            if detectorPolygon.intersects(polygon):
-                doesIntersect = True
-                break
+            if (np.all(np.isfinite(detectorSummary['raCorners']))
+                    and np.all(np.isfinite(detectorSummary['decCorners']))):
+                corners = [lsst.geom.SpherePoint(ra, decl, units=lsst.geom.degrees).getVector()
+                           for (ra, decl) in
+                           zip(detectorSummary['raCorners'], detectorSummary['decCorners'])]
+                detectorPolygon = lsst.sphgeom.ConvexPolygon.convexHull(corners)
+                if detectorPolygon.intersects(polygon):
+                    doesIntersect = True
+                    break
         return doesIntersect
 
 

@@ -93,7 +93,7 @@ class BestSeeingWcsSelectImagesTest(lsst.utils.tests.TestCase):
         self.bbox = lsst.geom.Box2I(lsst.geom.Point2I(0, 0), lsst.geom.Point2I(dims[0], dims[1]))
 
         self.selectList = []
-        for fwhm in self.mockFWHMs:
+        for i, fwhm in enumerate(self.mockFWHMs):
             # encode the FWHM in the dataId
             dataRef = unittest.mock.Mock(spec=lsst.daf.persistence.ButlerDataRef,
                                          dataId=self.makeDataId(fwhm))
@@ -101,6 +101,9 @@ class BestSeeingWcsSelectImagesTest(lsst.utils.tests.TestCase):
             # also create a new attribute to store the fwhm since side_effect
             # can only be called once per value
             dataRef.fwhm = fwhm
+            # Set one wcs to None to make sure it doesn't fail
+            if len(self.mockFWHMs) > 1 and i == len(self.mockFWHMs) - 1:
+                wcs = None
             selectStruct = selectImages.SelectStruct(dataRef, wcs, self.bbox)
             self.selectList.append(selectStruct)
 
@@ -141,7 +144,7 @@ class BestSeeingWcsSelectImagesTest(lsst.utils.tests.TestCase):
         self.localSetUp(mockFWHMs=[self.avgFwhm for i in range(self.config.nImagesMax)])
         task = selectImages.BestSeeingWcsSelectImagesTask(config=self.config)
         result = task.runDataRef(self.dataRef, self.coordList, selectDataList=self.selectList)
-        self.assertEqual(len(result.exposureInfoList), self.config.nImagesMax)
+        self.assertEqual(len(result.exposureInfoList), self.config.nImagesMax - 1)
         for dataRef in result.dataRefList:
             self.assertEqual(dataRef.fwhm, self.avgFwhm)
 
@@ -152,7 +155,7 @@ class BestSeeingWcsSelectImagesTest(lsst.utils.tests.TestCase):
         self.localSetUp(mockFWHMs=[self.avgFwhm for i in range(3)])
         task = selectImages.BestSeeingWcsSelectImagesTask(config=self.config)
         result = task.runDataRef(self.dataRef, self.coordList, selectDataList=self.selectList)
-        self.assertEqual(len(result.exposureInfoList), 3)
+        self.assertEqual(len(result.exposureInfoList), 2)
         for dataRef in result.dataRefList:
             self.assertEqual(dataRef.fwhm, self.avgFwhm)
 

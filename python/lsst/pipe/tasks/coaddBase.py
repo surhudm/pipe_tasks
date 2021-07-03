@@ -260,10 +260,14 @@ class SelectDataIdContainer(pipeBase.DataIdContainer):
         for ref in self.refList:
             try:
                 md = ref.get("calexp_md", immediate=True)
-                wcs = afwGeom.makeSkyWcs(md)
-                data = SelectStruct(dataRef=ref, wcs=wcs, bbox=afwImage.bboxFromMetadata(md))
+                if "CRPIX1" not in md.names():
+                    namespace.log.info("SelectDataIdContainer: De-selecting %s.  No WCS found.", ref.dataId)
+                    continue
+                else:
+                    wcs = afwGeom.makeSkyWcs(md)
+                    data = SelectStruct(dataRef=ref, wcs=wcs, bbox=afwImage.bboxFromMetadata(md))
             except FitsError:
-                namespace.log.warning("Unable to construct Wcs from %s", ref.dataId)
+                namespace.log.warning("SelectDataIdContainer: Unable to construct Wcs from %s", ref.dataId)
                 continue
             self.dataList.append(data)
 

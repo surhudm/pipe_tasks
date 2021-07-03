@@ -117,26 +117,30 @@ def createImage(
     dataId={"name": "foobar"},          # Data identifier
     center=CENTER,                      # ICRS sky position of center (lsst.afw.geom.SpherePoint)
     rotateAxis=ROTATEAXIS,              # Rotation axis (lsst.afw.geom.SpherePoint)
-    rotateAngle=0*geom.degrees,      # Rotation angle/distance to move (Angle)
+    rotateAngle=0*geom.degrees,         # Rotation angle/distance to move (Angle)
     dims=DIMS,                          # Image dimensions (Extent2I)
-    scale=SCALE                         # Pixel scale (Angle)
+    scale=SCALE,                        # Pixel scale (Angle)
+    noWcs=False,                        # Set WCS to None
 ):
     crpix = geom.Point2D(geom.Extent2D(dims)*0.5)
     center = center.rotated(rotateAxis, rotateAngle)
     cdMatrix = afwGeom.makeCdMatrix(scale=scale)
-    wcs = afwGeom.makeSkyWcs(crpix=crpix, crval=center, cdMatrix=cdMatrix)
+    if noWcs:
+        wcs = None
+    else:
+        wcs = afwGeom.makeSkyWcs(crpix=crpix, crval=center, cdMatrix=cdMatrix)
     return SelectStruct(DummyDataRef(dataId), wcs, geom.Box2I(geom.Point2I(0, 0),
                                                               geom.Extent2I(dims[0], dims[1])))
 
 
 class WcsSelectImagesTestCase(unittest.TestCase):
 
-    def check(self, patchRef, selectData, doesOverlap):
+    def check(self, patchRef, selectData, doesOverlap, numExpected=1):
         config = CoaddBaseTask.ConfigClass()
         config.select.retarget(WcsSelectImagesTask)
         task = CoaddBaseTask(config=config, name="CoaddBase")
         dataRefList = task.selectExposures(patchRef, selectDataList=[selectData])
-        numExpected = 1 if doesOverlap else 0
+        numExpected = numExpected if doesOverlap else 0
         self.assertEqual(len(dataRefList), numExpected)
 
     def testIdentical(self):
@@ -156,6 +160,9 @@ class WcsSelectImagesTestCase(unittest.TestCase):
     def testIntersect(self):
         self.check(createPatch(), createImage(rotateAngle=0.5*geom.Extent2D(DIMS).computeNorm()*SCALE),
                    True)
+
+    def testWcsNone(self):
+        self.check(createPatch(), createImage(noWcs=True), True, numExpected=0)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

@@ -1388,7 +1388,8 @@ class MakeCcdVisitTableTask(CmdLineTask, pipeBase.PipelineTask):
             ccdVisitIds = [packer.pack(dataId) for dataId in dataIds]
             ccdEntry['ccdVisitId'] = ccdVisitIds
 
-            pixToArcseconds = np.array([vR.getWcs().getPixelScale().asArcseconds() for vR in visitSummary])
+            pixToArcseconds = np.array([vR.getWcs().getPixelScale().asArcseconds() if vR.getWcs()
+                                        else np.nan for vR in visitSummary])
             ccdEntry["seeing"] = visitSummary['psfSigma'] * np.sqrt(8 * np.log(2)) * pixToArcseconds
 
             ccdEntry["skyRotation"] = visitInfo.getBoresightRotAngle().asDegrees()
