@@ -23,9 +23,8 @@
 Insert fake trailed-sources into calexps
 """
 
-import lsst.meas.extensions.trailedSources
-
 import lsst.afw.table as afwTable
+import lsst.meas.extensions.trailedSources  # noqa: F401
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 import lsst.pipe.base.connectionTypes as cT
@@ -143,7 +142,6 @@ class ProcessCcdWithFakeTrailsTask(PipelineTask):
         fakesStruct = pipeBase.Struct(outputExposure=exposure, outputCat=sources)
         return fakesStruct
 
-
     def copyCalibrationFields(self, calibCat, sourceCat, fieldsToCopy):
         """Match sources in calibCat and sourceCat and copy the specified fields
 
@@ -202,11 +200,15 @@ class ProcessCcdWithFakeTrailsTask(PipelineTask):
         for k, v in sourceCat.schema.getAliasMap().items():
             newCat.schema.getAliasMap().set(k, v)
 
-        select = newCat["deblend_nChild"] == 0
-        matches = afwTable.matchXy(newCat[select], calibCat, self.config.matchRadiusPix)
+        if self.config.calibrate.doDeblend:
+            select = newCat["deblend_nChild"] == 0
+            matches = afwTable.matchXy(newCat[select], calibCat, self.config.matchRadiusPix)
+        else:
+            matches = afwTable.matchXy(newCat, calibCat, self.config.matchRadiusPix)
         # Check that no sourceCat sources are listed twice (we already know
         # that each match has a unique calibCat source ID, due to using
         # that ID as the key in bestMatches)
+
         numMatches = len(matches)
         numUniqueSources = len(set(m[1].getId() for m in matches))
         if numUniqueSources != numMatches:
