@@ -40,7 +40,7 @@ __all__ = ["InsertFakeTrailsConfig", "InsertFakeTrailsTask"]
 
 
 class InsertFakeTrailsConnections(PipelineTaskConnections,
-                                  dimensions=("visit", "detector", "skymap")):
+                                  dimensions=("instrument", "visit", "detector", "skymap")):
 
     exposure = cT.Input(
         doc="The image into which fake trails are to be added.",
@@ -51,9 +51,9 @@ class InsertFakeTrailsConnections(PipelineTaskConnections,
 
     fakeCat = cT.Input(
         doc="Catalog of fake trailed-sources to be added",
-        name="fake_trails_catalog",
+        name="fake_trails_catalog_inst",
         storageClass="DataFrame",
-        dimensions=("skymap",)
+        dimensions=("instrument",)
     )
 
     imageWithFakes = cT.Output(

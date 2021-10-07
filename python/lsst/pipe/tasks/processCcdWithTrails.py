@@ -38,7 +38,7 @@ __all__ = ["ProcessCcdWithFakeTrailsConfig", "ProcessCcdWithFakeTrailsTask"]
 
 
 class ProcessCcdWithFakeTrailsConnections(PipelineTaskConnections,
-                                          dimensions=("visit", "detector", "skymap")):
+                                          dimensions=("instrument", "visit", "detector", "skymap")):
     exposure = cT.Input(
         doc="Exposure to add fake trails to.",
         name="calexp",
@@ -48,9 +48,9 @@ class ProcessCcdWithFakeTrailsConnections(PipelineTaskConnections,
 
     fakeCat = cT.Input(
         doc="Catalog of fake sources to be added",
-        name="fake_trails_catalog",
+        name="fake_trails_catalog_inst",
         storageClass="DataFrame",
-        dimensions=("skymap",)
+        dimensions=("instrument",)
     )
 
     trueSourceCat = cT.Input(
@@ -64,14 +64,14 @@ class ProcessCcdWithFakeTrailsConnections(PipelineTaskConnections,
         doc="Exposure with fake trails added.",
         name="fakes_calexp",
         storageClass="ExposureF",
-        dimensions=("instrument", "visit", "detector")
+        dimensions=("instrument", "visit", "detector"),
     )
 
     outputCat = cT.Output(
         doc="Source catalog produced in calibrate traks with fakes also measured.",
         name="fakes_src",
         storageClass="SourceCatalog",
-        dimensions=("instrument", "visit", "detector")
+        dimensions=("instrument", "visit", "detector"),
     )
 
 
