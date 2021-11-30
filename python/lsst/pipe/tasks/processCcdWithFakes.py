@@ -373,8 +373,7 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             for externalSkyWcsCatalogRef in externalSkyWcsCatalogList:
                 if externalSkyWcsCatalogRef.dataId["tract"] == tractId:
                     externalSkyWcsCatalog = externalSkyWcsCatalogRef.get(
-                        datasetType=self.config.connections.externalSkyWcsTractCatalog,
-                        immediate=True)
+                        datasetType=self.config.connections.externalSkyWcsTractCatalog)
                     break
             row = externalSkyWcsCatalog.find(detectorId)
             inputs["wcs"] = row.getWcs()
@@ -390,8 +389,7 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             for externalPhotoCalibCatalogRef in externalPhotoCalibCatalogList:
                 if externalPhotoCalibCatalogRef.dataId["tract"] == tractId:
                     externalPhotoCalibCatalog = externalPhotoCalibCatalogRef.get(
-                        datasetType=self.config.connections.externalSkyWcsTractCatalog,
-                        immediate=True)
+                        datasetType=self.config.connections.externalSkyWcsTractCatalog)
                     break
             row = externalPhotoCalibCatalog.find(detectorId)
             inputs["photoCalib"] = row.getPhotoCalib()
@@ -494,13 +492,11 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
         """
         if len(fakeCats) == 1:
             return fakeCats[0].get(
-                datasetType=self.config.connections.fakeCats,
-                immediate=True)
+                datasetType=self.config.connections.fakeCats)
         outputCat = []
         for fakeCatRef in fakeCats:
             cat = fakeCatRef.get(
-                datasetType=self.config.connections.fakeCats,
-                immediate=True)
+                datasetType=self.config.connections.fakeCats)
             tractId = fakeCatRef.dataId["tract"]
             # Make sure all data is within the inner part of the tract.
             outputCat.append(cat[

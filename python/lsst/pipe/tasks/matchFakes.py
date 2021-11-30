@@ -196,13 +196,11 @@ class MatchFakesTask(PipelineTask):
         """
         if len(fakeCats) == 1:
             return fakeCats[0].get(
-                datasetType=self.config.connections.fakeCats,
-                immediate=True)
+                datasetType=self.config.connections.fakeCats)
         outputCat = []
         for fakeCatRef in fakeCats:
             cat = fakeCatRef.get(
-                datasetType=self.config.connections.fakeCats,
-                immediate=True)
+                datasetType=self.config.connections.fakeCats)
             tractId = fakeCatRef.dataId["tract"]
             # Make sure all data is within the inner part of the tract.
             outputCat.append(cat[
