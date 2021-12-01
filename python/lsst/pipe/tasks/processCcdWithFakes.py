@@ -236,6 +236,12 @@ class ProcessCcdWithFakesConfig(PipelineTaskConfig,
         doc=("Match radius for matching icSourceCat objects to sourceCat objects (pixels)"),
     )
 
+    doMatchVisit = pexConfig.Field(
+        dtype=bool,
+        default=False,
+        doc="Match visit to trim the fakeCat"
+    )
+
     calibrate = pexConfig.ConfigurableField(target=CalibrateTask,
                                             doc="The calibration task to use.")
 
@@ -362,6 +368,7 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
         expWcs = inputs["exposure"].getWcs()
         tractId = inputs["skyMap"].findTract(
             expWcs.pixelToSky(inputs["exposure"].getBBox().getCenter())).tract_id
+        self.log.info(f"tractId: {tractId}")
         if not self.config.doApplyExternalGlobalSkyWcs and not self.config.doApplyExternalTractSkyWcs:
             inputs["wcs"] = expWcs
         elif self.config.doApplyExternalGlobalSkyWcs:
@@ -370,11 +377,16 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             inputs["wcs"] = row.getWcs()
         elif self.config.doApplyExternalTractSkyWcs:
             externalSkyWcsCatalogList = inputs["externalSkyWcsTractCatalog"]
+            self.log.info(f"externalSkyWcsCatalogList: {externalSkyWcsCatalogList}")
             for externalSkyWcsCatalogRef in externalSkyWcsCatalogList:
+                self.log.info(f"Testing tract: {externalSkyWcsCatalogRef.dataId['tract']}")
                 if externalSkyWcsCatalogRef.dataId["tract"] == tractId:
                     externalSkyWcsCatalog = externalSkyWcsCatalogRef.get(
                         datasetType=self.config.connections.externalSkyWcsTractCatalog)
                     break
+                else:
+                    externalSkyWcsCatalog = externalSkyWcsCatalogRef.get(
+                        datasetType=self.config.connections.externalSkyWcsTractCatalog)
             row = externalSkyWcsCatalog.find(detectorId)
             inputs["wcs"] = row.getWcs()
 
@@ -389,8 +401,11 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             for externalPhotoCalibCatalogRef in externalPhotoCalibCatalogList:
                 if externalPhotoCalibCatalogRef.dataId["tract"] == tractId:
                     externalPhotoCalibCatalog = externalPhotoCalibCatalogRef.get(
-                        datasetType=self.config.connections.externalSkyWcsTractCatalog)
+                        datasetType=self.config.connections.externalPhotoCalibTractCatalog)
                     break
+                else:
+                    externalPhotoCalibCatalog = externalPhotoCalibCatalogRef.get(
+                        datasetType=self.config.connections.externalPhotoCalibTractCatalog)
             row = externalPhotoCalibCatalog.find(detectorId)
             inputs["photoCalib"] = row.getPhotoCalib()
 
@@ -461,6 +476,9 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
         if photoCalib is None:
             photoCalib = exposure.getPhotoCalib()
 
+        if self.config.doMatchVisit:
+            fakeCat = self.getVisitMatchedFakeCat(fakeCat, exposure)
+
         self.insertFakes.run(fakeCat, exposure, wcs, photoCalib)
 
         # detect, deblend and measure sources
@@ -500,12 +518,35 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             tractId = fakeCatRef.dataId["tract"]
             # Make sure all data is within the inner part of the tract.
             outputCat.append(cat[
-                skyMap.findTractIdArray(cat[self.config.insertFakes.raColName],
-                                        cat[self.config.insertFakes.decColName],
+                skyMap.findTractIdArray(cat[self.config.insertFakes.ra_col],
+                                        cat[self.config.insertFakes.dec_col],
                                         degrees=False)
                 == tractId])
 
         return pd.concat(outputCat)
+
+    def getVisitMatchedFakeCat(self, fakeCat, exposure):
+        """Trim the fakeCat to select particular field
+
+        Parameters
+        ----------
+        fakeCat : `pandas.core.frame.DataFrame`
+                    The catalog of fake sources to add to the exposure
+        exposure : `lsst.afw.image.exposure.exposure.ExposureF`
+                    The exposure to add the fake sources to
+
+        Returns
+        -------
+        movingFakeCat : `pandas.DataFrame`
+            All fakes that satisfy conditions specified by matchExposureField
+        """
+        try:
+            selected = exposure.getInfo().getVisitInfo().getId()==fakeCat["visit"]
+        except Exception as e:
+            self.log.warning("Error subselecting movingFakeCatalog, proceeding with full catalog instead.", e)
+            return fakeCat
+
+        return fakeCat[selected]
 
     def copyCalibrationFields(self, calibCat, sourceCat, fieldsToCopy):
         """Match sources in calibCat and sourceCat and copy the specified fields
