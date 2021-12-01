@@ -35,7 +35,9 @@ from lsst.pipe.tasks.insertFakes import InsertFakesConfig
 __all__ = ["MatchFakesTask",
            "MatchFakesConfig",
            "MatchVariableFakesConfig",
-           "MatchVariableFakesTask"]
+           "MatchVariableFakesTask",
+           "MatchMovingFakesConfig",
+           "MatchMovingFakesTask"]
 
 
 class MatchFakesConnections(PipelineTaskConnections,
@@ -356,3 +358,77 @@ class MatchVariableFakesTask(MatchFakesTask):
         fakeCat.loc[noVisit, magName] = -magnitudes[noVisit]
         fakeCat.loc[noTemplate, magName] = visitMags[noTemplate]
         fakeCat.loc[both, magName] = diffMag[both]
+
+
+class MatchMovingFakesConfig(MatchMovingFakesConfig,
+                               pipelineConnections=MatchFakesConnections):
+    matchExposureField = pexConfig.ChoiceField(
+        dtype=str,
+        default="visit",
+        allowed={"visit": "Use visit number", "mjd": "Use mjd"},
+        doc="Field to use to identify which moving object to put in an exposure"
+    )
+
+
+class MatchMovingFakesTask(MatchFakesTask):
+    """Match injected fakes to their detected sources in the catalog and
+    compute their expected brightness in a difference image assuming perfect
+    subtraction.
+
+    This task is generally for injected sources that cannot be easily
+    identified by their footprints such as in the case of detector sources
+    post image differencing.
+    """
+    _DefaultName = "matchMovingFakes"
+    ConfigClass = MatchMovingFakesConfig
+
+    def run(self, fakeCats, ccdVisitFakeMagnitudes, skyMap, diffIm, associatedDiaSources, band):
+        """Match fakes to detected diaSources within a difference image bound.
+
+        Parameters
+        ----------
+        fakeCat : `pandas.DataFrame`
+            Catalog of fakes to match to detected diaSources.
+        diffIm : `lsst.afw.image.Exposure`
+            Difference image where ``associatedDiaSources`` were detected in.
+        associatedDiaSources : `pandas.DataFrame`
+            Catalog of difference image sources detected in ``diffIm``.
+
+        Returns
+        -------
+        result : `lsst.pipe.base.Struct`
+            Results struct with components.
+
+            - ``matchedDiaSources`` : Fakes matched to input diaSources. Has
+              length of ``fakeCat``. (`pandas.DataFrame`)
+        """
+        fakeCat = self.composeFakeCat(fakeCats, skyMap)
+        fakeCat = self.getMovingFakeCat(fakeCats, diffIm)
+
+        return self._processFakes(fakeCat, diffIm, associatedDiaSources)
+
+    def getMovingFakeCat(self, fakeCat, exposure):
+        """Trim the fakeCat to select particular field
+
+        Parameters
+        ----------
+        fakeCat : `pandas.core.frame.DataFrame`
+                    The catalog of fake sources to add to the exposure
+        exposure : `lsst.afw.image.exposure.exposure.ExposureF`
+                    The exposure to add the fake sources to
+
+        Returns
+        -------
+        movingFakeCat : `pandas.DataFrame`
+            All fakes that satisfy conditions specified by matchExposureField
+        """
+        try:
+            if self.config.matchExposureField == "visit":
+                selected = exposure.getInfo().getVisitInfo().getId()==fakeCat["visit"]
+            elif self.config.matchExposureField == "mjd":
+                selected = exposure.getInfo().getVisitInfo().getUt1()==fakeCat["mjd"]
+        except Exception as e:
+            self.log.warning("Error subselecting movingFakeCatalog, proceeding with full catalog instead.", e)
+            return fakeCat
+
+        return fakeCat[selected]

@@ -40,7 +40,8 @@ from lsst.skymap import BaseSkyMap
 from lsst.pipe.tasks.calibrate import CalibrateTask
 
 __all__ = ["ProcessCcdWithFakesConfig", "ProcessCcdWithFakesTask",
-           "ProcessCcdWithVariableFakesConfig", "ProcessCcdWithVariableFakesTask"]
+           "ProcessCcdWithVariableFakesConfig", "ProcessCcdWithVariableFakesTask",
+           "ProcessCcdWithMovingFakesConfig"]
 
 
 class ProcessCcdWithFakesConnections(PipelineTaskConnections,
@@ -500,8 +501,8 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             tractId = fakeCatRef.dataId["tract"]
             # Make sure all data is within the inner part of the tract.
             outputCat.append(cat[
-                skyMap.findTractIdArray(cat[self.config.insertFakes.raColName],
-                                        cat[self.config.insertFakes.decColName],
+                skyMap.findTractIdArray(cat[self.config.insertFakes.ra_col],
+                                        cat[self.config.insertFakes.dec_col],
                                         degrees=False)
                 == tractId])
 
@@ -741,3 +742,119 @@ class ProcessCcdWithVariableFakesTask(ProcessCcdWithFakesTask):
         visitMagnitudes = fakeCat[self.insertFakes.config.mag_col % band] + magScatter
         fakeCat.loc[:, self.insertFakes.config.mag_col % band] = visitMagnitudes
         return pd.DataFrame(data={"variableMag": visitMagnitudes})
+
+
+class ProcessCcdWithMovingFakesConfig(ProcessCcdWithFakesConfig,
+                                      pipelineConnections=ProcessCcdWithFakesConnections):
+    matchExposureField = pexConfig.ChoiceField(
+        dtype=str,
+        default="visit",
+        allowed={"visit": "Use visit number", "mjd": "Use mjd"},
+        doc="Field to use to identify which moving object to put in an exposure"
+    )
+
+
+class ProcessCcdWithMovingFakesTask(ProcessCcdWithFakesTask):
+    """As ProcessCcdWithFakes except addition of moving objects where we will put extra cuts on visit or mjd
+
+    Additionally, write out the visit wise injected catalog to the Butler.
+    """
+
+    _DefaultName = "processCcdWithMovingFakes"
+    ConfigClass = ProcessCcdWithMovingFakesConfig
+
+    def getMovingFakeCat(self, fakeCat, exposure):
+        """Trim the fakeCat to select particular field
+
+        Parameters
+        ----------
+        fakeCat : `pandas.core.frame.DataFrame`
+                    The catalog of fake sources to add to the exposure
+        exposure : `lsst.afw.image.exposure.exposure.ExposureF`
+                    The exposure to add the fake sources to
+
+        Returns
+        -------
+        movingFakeCat : `pandas.DataFrame`
+            All fakes that satisfy conditions specified by matchExposureField
+        """
+        try:
+            if self.config.matchExposureField == "visit":
+                selected = exposure.getInfo().getVisitInfo().getId()==fakeCat["visit"]
+            elif self.config.matchExposureField == "mjd":
+                selected = exposure.getInfo().getVisitInfo().getUt1()==fakeCat["mjd"]
+        except Exception as e:
+            self.log.warning("Error subselecting movingFakeCatalog, proceeding with full catalog instead.", e)
+            return fakeCat
+
+        return fakeCat[selected]
+
+    def run(self, fakeCats, exposure, skyMap, wcs=None, photoCalib=None, exposureIdInfo=None,
+            icSourceCat=None, sfdSourceCat=None, externalSkyWcsGlobalCatalog=None,
+            externalSkyWcsTractCatalog=None, externalPhotoCalibGlobalCatalog=None,
+            externalPhotoCalibTractCatalog=None):
+        """Add fake sources to a calexp and then run detection, deblending and measurement.
+
+        Parameters
+        ----------
+        fakeCat : `pandas.core.frame.DataFrame`
+                    The catalog of fake sources to add to the exposure
+        exposure : `lsst.afw.image.exposure.exposure.ExposureF`
+                    The exposure to add the fake sources to
+        skyMap : `lsst.skymap.SkyMap`
+            SkyMap defining the tracts and patches the fakes are stored over.
+        wcs : `lsst.afw.geom.SkyWcs`
+                    WCS to use to add fake sources
+        photoCalib : `lsst.afw.image.photoCalib.PhotoCalib`
+                    Photometric calibration to be used to calibrate the fake sources
+        exposureIdInfo : `lsst.obs.base.ExposureIdInfo`
+        icSourceCat : `lsst.afw.table.SourceCatalog`
+                    Default : None
+                    Catalog to take the information about which sources were used for calibration from.
+        sfdSourceCat : `lsst.afw.table.SourceCatalog`
+                    Default : None
+                    Catalog produced by singleFrameDriver, needed to copy some calibration flags from.
+
+        Returns
+        -------
+        resultStruct : `lsst.pipe.base.struct.Struct`
+            contains : outputExposure : `lsst.afw.image.exposure.exposure.ExposureF`
+                       outputCat : `lsst.afw.table.source.source.SourceCatalog`
+
+        Notes
+        -----
+        Adds pixel coordinates for each source to the fakeCat and removes objects with bulge or disk half
+        light radius = 0 (if ``config.cleanCat = True``). These columns are called ``x`` and ``y`` and are in
+        pixels.
+
+        Adds the ``Fake`` mask plane to the exposure which is then set by `addFakeSources` to mark where fake
+        sources have been added. Uses the information in the ``fakeCat`` to make fake galaxies (using galsim)
+        and fake stars, using the PSF models from the PSF information for the calexp. These are then added to
+        the calexp and the calexp with fakes included returned.
+
+        The galsim galaxies are made using a double sersic profile, one for the bulge and one for the disk,
+        this is then convolved with the PSF at that point.
+
+        If exposureIdInfo is not provided then the SourceCatalog IDs will not be globally unique.
+        """
+        fakeCat = self.composeFakeCat(fakeCats, skyMap)
+        fakeCat = self.getMovingFakeCat(fakeCat, exposure)
+
+        if wcs is None:
+            wcs = exposure.getWcs()
+
+        if photoCalib is None:
+            photoCalib = exposure.getPhotoCalib()
+
+        self.insertFakes.run(fakeCat, exposure, wcs, photoCalib)
+
+        # detect, deblend and measure sources
+        if exposureIdInfo is None:
+            exposureIdInfo = ExposureIdInfo()
+        returnedStruct = self.calibrate.run(exposure, exposureIdInfo=exposureIdInfo)
+        sourceCat = returnedStruct.sourceCat
+
+        sourceCat = self.copyCalibrationFields(sfdSourceCat, sourceCat, self.config.srcFieldsToCopy)
+
+        resultStruct = pipeBase.Struct(outputExposure=exposure, outputCat=sourceCat)
+        return resultStruct
