@@ -255,6 +255,12 @@ class InsertFakesConfig(PipelineTaskConfig,
         default=False,
     )
 
+    insertOnlyStars = pexConfig.Field(
+        doc="Insert only stars? True or False.",
+        dtype=bool,
+        default=False,
+    )
+
     doProcessAllDataIds = pexConfig.Field(
         doc="If True, all input data IDs will be processed, even those containing no fake sources.",
         dtype=bool,
@@ -636,7 +642,6 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
 
         fakeCat = self.addPixCoords(fakeCat, image)
         fakeCat = self.trimFakeCat(fakeCat, image)
-
         if len(fakeCat) > 0:
             if not self.config.insertImages:
                 if isinstance(fakeCat[self.config.sourceType].iloc[0], str):
@@ -709,7 +714,7 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
         ]:
             add_to_replace_dict(new_name, depr_name, std_name)
         # Only handle bulge/disk params if not injecting images
-        if not cfg.insertImages:
+        if not cfg.insertImages and not cfg.insertOnlyStars:
             for new_name, depr_name, std_name in [
                 (cfg.bulge_n_col, cfg.nBulge, 'bulge_n'),
                 (cfg.bulge_pa_col, cfg.paBulge, 'bulge_pa'),
@@ -729,7 +734,7 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
         # Handling the half-light radius and axis-ratio are trickier, since we
         # moved from expecting (HLR, a, b) to expecting (semimajor, axis_ratio).
         # Just handle these manually.
-        if not cfg.insertImages:
+        if not cfg.insertImages and not cfg.insertOnlyStars:
             if (
                 cfg.bulge_semimajor_col in fakeCat.columns
                 and cfg.bulge_axis_ratio_col in fakeCat.columns
