@@ -71,7 +71,7 @@ def _add_fake_sources(exposure, objects, calibFluxRadius=12.0, logger=None):
     fullBounds = galsim.BoundsI(bbox.minX, bbox.maxX, bbox.minY, bbox.maxY)
     gsImg = galsim.Image(exposure.image.array, bounds=fullBounds)
 
-    pixScale = wcs.getPixelScale().asArcseconds()
+    pixScale = wcs.getPixelScale(bbox.getCenter()).asArcseconds()
 
     for spt, gsObj in objects:
         pt = wcs.skyToPixel(spt)
@@ -88,6 +88,7 @@ def _add_fake_sources(exposure, objects, calibFluxRadius=12.0, logger=None):
         # were being included.
         gsPixScale = np.sqrt(gsWCS.pixelArea())
         if gsPixScale < pixScale/2 or gsPixScale > pixScale*2:
+            logger.info(f"Removing source at {pt} due to multi-valued WCS {gsPixScale} {pixScale}")
             continue
 
         try:
@@ -816,8 +817,10 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
 
             try:
                 flux = photoCalib.magnitudeToInstFlux(row['mag'], xy)
-            except LogicError:
+            except LogicError as e:
+                self.log.info(f"LogicError in inserting object: {e}")
                 continue
+            self.log.info(f"Inserting object with: {flux} at {xy} position which is at {ra}, {dec}")
 
             sourceType = row[self.config.sourceType]
             if sourceType == galCheckVal:

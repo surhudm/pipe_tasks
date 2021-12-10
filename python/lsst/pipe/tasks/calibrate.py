@@ -19,6 +19,8 @@
 # the GNU General Public License along with this program.  If not,
 # see <https://www.lsstcorp.org/LegalNotices/>.
 #
+import resource
+import sys
 import math
 
 from lsstDebug import getDebugFrame
@@ -42,6 +44,7 @@ from lsst.pipe.tasks.setPrimaryFlags import SetPrimaryFlagsTask
 from .fakes import BaseFakeSourcesTask
 from .photoCal import PhotoCalTask
 from .computeExposureSummaryStats import ComputeExposureSummaryStatsTask
+import gc
 
 
 __all__ = ["CalibrateConfig", "CalibrateTask"]
@@ -677,6 +680,8 @@ class CalibrateTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
           solver
         """
         # detect, deblend and measure sources
+        sys.stderr.write('Calibrate Memory usage 1 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         if exposureIdInfo is None:
             exposureIdInfo = ExposureIdInfo()
 
@@ -686,12 +691,18 @@ class CalibrateTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         table = SourceTable.make(self.schema, sourceIdFactory)
         table.setMetadata(self.algMetadata)
 
+        sys.stderr.write('Calibrate Memory usage 2 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         detRes = self.detection.run(table=table, exposure=exposure,
                                     doSmooth=True)
+        sys.stderr.write('Calibrate Memory usage 3 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         sourceCat = detRes.sources
         if detRes.fpSets.background:
             for bg in detRes.fpSets.background:
                 background.append(bg)
+        sys.stderr.write('Calibrate Memory usage 4 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         if self.config.doSkySources:
             skySourceFootprints = self.skySources.run(mask=exposure.mask, seed=exposureIdInfo.expId)
             if skySourceFootprints:
@@ -699,19 +710,29 @@ class CalibrateTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
                     s = sourceCat.addNew()
                     s.setFootprint(foot)
                     s.set(self.skySourceKey, True)
+        sys.stderr.write('Calibrate Memory usage 5 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         if self.config.doDeblend:
             self.deblend.run(exposure=exposure, sources=sourceCat)
+        sys.stderr.write('Calibrate Memory usage 5.5 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         self.measurement.run(
             measCat=sourceCat,
             exposure=exposure,
             exposureId=exposureIdInfo.expId
         )
+        sys.stderr.write('Calibrate Memory usage 6 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         if self.config.doApCorr:
             self.applyApCorr.run(
                 catalog=sourceCat,
                 apCorrMap=exposure.getInfo().getApCorrMap()
             )
+        sys.stderr.write('Calibrate Memory usage 7 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         self.catalogCalculation.run(sourceCat)
+        sys.stderr.write('Calibrate Memory usage 8 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
 
         self.setPrimaryFlags.run(sourceCat)
 
@@ -719,6 +740,8 @@ class CalibrateTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
            len(self.config.icSourceFieldsToCopy) > 0:
             self.copyIcSourceFields(icSourceCat=icSourceCat,
                                     sourceCat=sourceCat)
+        sys.stderr.write('Calibrate Memory usage 9 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
 
         # TODO DM-11568: this contiguous check-and-copy could go away if we
         # reserve enough space during SourceDetection and/or SourceDeblend.
@@ -760,6 +783,8 @@ class CalibrateTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
                 self.log.warning("Unable to perform photometric calibration "
                                  "(%s): attempting to proceed", e)
                 self.setMetadata(exposure=exposure, photoRes=None)
+        sys.stderr.write('Calibrate Memory usage 10 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
 
         if self.config.doInsertFakes:
             self.insertFakes.run(exposure, background=background)
@@ -791,12 +816,16 @@ class CalibrateTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
                 self.copyIcSourceFields(icSourceCat=icSourceCat,
                                         sourceCat=sourceCat)
 
+        sys.stderr.write('Calibrate Memory usage 11 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         if self.config.doComputeSummaryStats:
             summary = self.computeSummaryStats.run(exposure=exposure,
                                                    sources=sourceCat,
                                                    background=background)
             exposure.getInfo().setSummaryStats(summary)
 
+        sys.stderr.write('Calibrate Memory usage 12 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         frame = getDebugFrame(self._display, "calibrate")
         if frame:
             displayAstrometry(

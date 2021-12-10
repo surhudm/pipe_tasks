@@ -22,6 +22,9 @@
 """
 Insert fake sources into calexps
 """
+import resource
+import sys
+import gc
 from astropy.table import Table
 import numpy as np
 import pandas as pd
@@ -363,6 +366,7 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
         expWcs = inputs["exposure"].getWcs()
         tractId = inputs["skyMap"].findTract(
             expWcs.pixelToSky(inputs["exposure"].getBBox().getCenter())).tract_id
+        self.log.info(f"tractId: {tractId}")
         if not self.config.doApplyExternalGlobalSkyWcs and not self.config.doApplyExternalTractSkyWcs:
             inputs["wcs"] = expWcs
         elif self.config.doApplyExternalGlobalSkyWcs:
@@ -371,11 +375,16 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             inputs["wcs"] = row.getWcs()
         elif self.config.doApplyExternalTractSkyWcs:
             externalSkyWcsCatalogList = inputs["externalSkyWcsTractCatalog"]
+            self.log.info(f"externalSkyWcsCatalogList: {externalSkyWcsCatalogList}")
             for externalSkyWcsCatalogRef in externalSkyWcsCatalogList:
+                self.log.info(f"Testing tract: {externalSkyWcsCatalogRef.dataId['tract']}")
                 if externalSkyWcsCatalogRef.dataId["tract"] == tractId:
                     externalSkyWcsCatalog = externalSkyWcsCatalogRef.get(
                         datasetType=self.config.connections.externalSkyWcsTractCatalog)
                     break
+                else:
+                    externalSkyWcsCatalog = externalSkyWcsCatalogRef.get(
+                        datasetType=self.config.connections.externalSkyWcsTractCatalog)
             row = externalSkyWcsCatalog.find(detectorId)
             inputs["wcs"] = row.getWcs()
 
@@ -390,13 +399,21 @@ class ProcessCcdWithFakesTask(PipelineTask, CmdLineTask):
             for externalPhotoCalibCatalogRef in externalPhotoCalibCatalogList:
                 if externalPhotoCalibCatalogRef.dataId["tract"] == tractId:
                     externalPhotoCalibCatalog = externalPhotoCalibCatalogRef.get(
-                        datasetType=self.config.connections.externalSkyWcsTractCatalog)
+                        datasetType=self.config.connections.externalPhotoCalibTractCatalog)
                     break
+                else:
+                    externalPhotoCalibCatalog = externalPhotoCalibCatalogRef.get(
+                        datasetType=self.config.connections.externalPhotoCalibTractCatalog)
             row = externalPhotoCalibCatalog.find(detectorId)
             inputs["photoCalib"] = row.getPhotoCalib()
 
         outputs = self.run(**inputs)
         butlerQC.put(outputs, outputRefs)
+        sys.stderr.write('End of quantum memory usage prior to gc : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        del outputs
+        del outputRefs
+        gc.collect()
+        sys.stderr.write('End of quantum memory usage post gc : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
     @classmethod
     def _makeArgumentParser(cls):
@@ -837,6 +854,8 @@ class ProcessCcdWithMovingFakesTask(ProcessCcdWithFakesTask):
 
         If exposureIdInfo is not provided then the SourceCatalog IDs will not be globally unique.
         """
+        sys.stderr.write('Memory usage 0 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         fakeCat = self.composeFakeCat(fakeCats, skyMap)
         fakeCat = self.getMovingFakeCat(fakeCat, exposure)
 
@@ -846,15 +865,27 @@ class ProcessCcdWithMovingFakesTask(ProcessCcdWithFakesTask):
         if photoCalib is None:
             photoCalib = exposure.getPhotoCalib()
 
+        sys.stderr.write('Memory usage 1 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         self.insertFakes.run(fakeCat, exposure, wcs, photoCalib)
+        sys.stderr.write('Memory usage 2 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
 
         # detect, deblend and measure sources
         if exposureIdInfo is None:
             exposureIdInfo = ExposureIdInfo()
         returnedStruct = self.calibrate.run(exposure, exposureIdInfo=exposureIdInfo)
+        sys.stderr.write('Memory usage 3 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
         sourceCat = returnedStruct.sourceCat
 
         sourceCat = self.copyCalibrationFields(sfdSourceCat, sourceCat, self.config.srcFieldsToCopy)
+        sys.stderr.write('Memory usage 4 : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        sys.stderr.flush()
 
         resultStruct = pipeBase.Struct(outputExposure=exposure, outputCat=sourceCat)
+        sys.stderr.write('End of moving fakes quantum memory usage prior to gc : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        del returnedStruct
+        gc.collect()
+        sys.stderr.write('End of moving fakes quantum memory usage post gc : %s (kb)\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
         return resultStruct
