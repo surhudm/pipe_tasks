@@ -67,6 +67,13 @@ class ImageDifferenceTaskConnections(pipeBase.PipelineTaskConnections,
         name="{fakesType}calexp"
     )
 
+    calexpBackgroundExposure = pipeBase.connectionTypes.Input(
+        doc="Input science exposure to subtract from.",
+        dimensions=("instrument", "visit", "detector"),
+        storageClass="Background",
+        name="calexpBackground"
+    )
+
     # TODO DM-22953
     # kernelSources = pipeBase.connectionTypes.Input(
     #     doc="Source catalog produced in calibrate task for kernel candidate sources",
@@ -149,6 +156,8 @@ class ImageDifferenceTaskConnections(pipeBase.PipelineTaskConnections,
             self.outputs.remove("matchedExposure")
         if not config.doWriteSources:
             self.outputs.remove("diaSources")
+        if not config.doAddCalexpBackground:
+            self.outputs.remove("calexpBackgroundExposure")
 
     # TODO DM-22953: Add support for refObjLoader (kernelSourcesFromRef)
     # Make kernelSources optional
@@ -548,8 +557,13 @@ class ImageDifferenceTask(pipeBase.CmdLineTask, pipeBase.PipelineTask):
 
         self.checkTemplateIsSufficient(templateStruct.exposure)
 
+        calexpBackgroundExposure = None
+        if self.config.doAddCalexpBackground:
+            calexpBackgroundExposure = inputs["calexpBackgroundExposure"]
+
         outputs = self.run(exposure=inputs['exposure'],
                            templateExposure=templateStruct.exposure,
+                           calexpBackgroundExposure = calexpBackgroundExposure,
                            idFactory=idFactory)
         # Consistency with runDataref gen2 handling
         if outputs.diaSources is None:
@@ -1354,8 +1368,13 @@ class ImageDifferenceFromTemplateTask(ImageDifferenceTask):
                                                       returnMaxBits=True)
         idFactory = self.makeIdFactory(expId=expId, expBits=expBits)
 
+        calexpBackgroundExposure = None
+        if self.config.doAddCalexpBackground:
+            calexpBackgroundExposure = inputs["calexpBackgroundExposure"]
+
         outputs = self.run(exposure=inputs['exposure'],
                            templateExposure=inputs['inputTemplate'],
+                           calexpBackgroundExposure=calexpBackgroundExposure,
                            idFactory=idFactory)
 
         # Consistency with runDataref gen2 handling
