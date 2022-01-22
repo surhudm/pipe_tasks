@@ -157,7 +157,7 @@ class ImageDifferenceTaskConnections(pipeBase.PipelineTaskConnections,
         if not config.doWriteSources:
             self.outputs.remove("diaSources")
         if not config.doAddCalexpBackground:
-            self.outputs.remove("calexpBackgroundExposure")
+            self.inputs.remove("calexpBackgroundExposure")
 
     # TODO DM-22953: Add support for refObjLoader (kernelSourcesFromRef)
     # Make kernelSources optional
