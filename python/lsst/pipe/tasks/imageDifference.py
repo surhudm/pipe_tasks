@@ -47,6 +47,7 @@ import lsst.afw.display as afwDisplay
 from lsst.skymap import BaseSkyMap
 from lsst.obs.base import ExposureIdInfo
 from lsst.utils.timer import timeMethod
+from lsst.meas.deblender import SourceDeblendTask
 
 __all__ = ["ImageDifferenceConfig", "ImageDifferenceTask"]
 FwhmPerSigma = 2*math.sqrt(2*math.log(2))
@@ -204,6 +205,15 @@ class ImageDifferenceConfig(pipeBase.PipelineTaskConfig,
         dtype=bool, default=False, doc="Use a simple gaussian PSF model for pre-convolution "
         "(oherwise use exposure PSF)? (AL and if useScoreImageDetection=True only)")
     doDetection = pexConfig.Field(dtype=bool, default=True, doc="Detect sources?")
+    doDeblend = pexConfig.Field(
+        dtype=bool,
+        default=True,
+        doc="Run deblender input exposure"
+    )
+    deblend = pexConfig.ConfigurableField(
+        target=SourceDeblendTask,
+        doc="Split blended sources into their components"
+    )
     doDecorrelation = pexConfig.Field(dtype=bool, default=True,
                                       doc="Perform diffim decorrelation to undo pixel correlation due to A&L "
                                       "kernel convolution (AL only)? If True, also update the diffim PSF.")
@@ -369,6 +379,9 @@ class ImageDifferenceConfig(pipeBase.PipelineTaskConfig,
         self.forcedMeasurement.slots.centroid = "base_TransformedCentroid"
         self.forcedMeasurement.slots.shape = None
 
+        # Deblending
+        self.deblend.maxFootprintSize = 2000
+
         # For shuffling the control sample
         random.seed(self.controlRandomSeed)
 
@@ -475,6 +488,8 @@ class ImageDifferenceTask(pipeBase.CmdLineTask, pipeBase.PipelineTask):
         self.algMetadata = dafBase.PropertyList()
         if self.config.doDetection:
             self.makeSubtask("detection", schema=self.schema)
+        if self.config.doDeblend:
+            self.makeSubtask("deblend", schema=self.schema)
         if self.config.doMeasurement:
             self.makeSubtask("measurement", schema=self.schema,
                              algMetadata=self.algMetadata)
@@ -709,6 +724,7 @@ class ImageDifferenceTask(pipeBase.CmdLineTask, pipeBase.PipelineTask):
         - PSF match image to warped template
         - subtract image from PSF-matched, warped template
         - detect sources
+        - deblend sources
         - measure sources
 
         For details about the image subtraction configuration modes
@@ -1062,6 +1078,9 @@ class ImageDifferenceTask(pipeBase.CmdLineTask, pipeBase.PipelineTask):
                         s = diaSources.addNew()
                         s.setFootprint(foot)
                         s.set(self.skySourceKey, True)
+
+            if self.config.doDeblend:
+                self.deblend.run(exposure=detectionExposure, sources=diaSources)
 
             if self.config.doMeasurement:
                 newDipoleFitting = self.config.doDipoleFitting
